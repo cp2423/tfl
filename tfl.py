@@ -36,11 +36,13 @@ DISPLAY_INTERVAL = 5 # show each bus for this many seconds
 
 WAKE_TIME = 100  # stay awake for 1m 40s
 
+MAX_CUT_OFF = 30 * 60   # ignore buses more than 30 minutes away
+MIN_CUT_OFF = 60  # ignore buses less than 1 minute away
+
 class Bus:
     def __init__(self, id, line, expected):
         self.id = id
         self.line = line
-        #self.arrives = arrives
         self.expected = expected
 
 buses = []
@@ -55,7 +57,6 @@ def download():
         return
     logging.debug(response.status_code)
     json_data = response.json()  # TFL API returns a list
-    #print(json_data)
 
     # clear out the previous list of buses
     if len(json_data) == 0:
@@ -65,14 +66,11 @@ def download():
     for foo in json_data:
         bus_id = foo["vehicleId"]
         line = foo["lineName"]
-        #arrives = foo["timeToStation"]
         #buses[arrives] = Bus(bus_id, line, arrives)
         #expected = foo["expectedArrival"]
         expected = foo["timeToStation"]
         print(line, expected)
         buses.append(Bus(bus_id, line, expected))
-
-    #print(buses)
 
 
 def daemon(seg, pir):
@@ -80,7 +78,6 @@ def daemon(seg, pir):
     global buses
     last_download = 0
     next_download = 0
-    CUT_OFF = 59 * 60   # ignore buses more than 59 minutes away
 
     sleepy_time = 0
     while True:
@@ -103,7 +100,7 @@ def daemon(seg, pir):
             expected_times = []
             for bus in sorted_buses:
                 expected = round(bus.expected - diff)
-                if expected > CUT_OFF:
+                if expected < MIN_CUT_OFF or expected > MAX_CUT_OFF:
                     continue
                 mins = str(expected // 60)
                 secs = str(expected % 60)
@@ -138,8 +135,6 @@ def main():
         serial = spi(port=0, device=0, gpio=noop())
         device = max7219(serial, cascaded=1)
         seg = sevensegment(device)
-        #seg.text = "BUSES"
-        #download()
         pir = MotionSensor(PIR_GPIO)
         daemon_thread = threading.Thread(target=daemon, args=(seg, pir,))
         #daemon_thread.setDaemon(True)
