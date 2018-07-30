@@ -5,6 +5,8 @@ import time
 import logging
 from os import path
 
+from gpiozero import MotionSensor
+
 from luma.led_matrix.device import max7219
 from luma.core.interface.serial import spi, noop
 from luma.core.virtual import sevensegment
@@ -19,6 +21,8 @@ with open(filepath) as conf:
     APP_KEY = conf.readline()
     print(APP_KEY)
 
+PIR_GPIO = 14
+
 BUS_STOP_ID = "490006045W"  # Stratford Park
 POINT = "/arrivals"
 API_URI = "https://api.tfl.gov.uk/StopPoint/" + BUS_STOP_ID + POINT
@@ -27,10 +31,10 @@ DOWNLOAD_INTERVAL = 45  # download every 45 seconds
 # Note: was 30 seconds, but TfL docs say data is cached for 30
 # so "there is no benefit to the developer in querying any 
 # of the data services any more frequently"
-#next_download = 0
 
 DISPLAY_INTERVAL = 5 # show each bus for this many seconds
-#next_display = None
+
+WAKE_TIME = 100  # stay awake for 1m 40s
 
 class Bus:
     def __init__(self, id, line, expected):
@@ -43,6 +47,7 @@ buses = []
 
 def download():
     logging.debug("Starting a download")
+    global buses
     # get the bus stop arrivals data from the TFL API
     response = requests.get(API_URI)
     if response.status_code != 200:
@@ -57,7 +62,6 @@ def download():
         return
     buses.clear()
     # process the json data to pull out just the interesting items
-    print(time.localtime())
     for foo in json_data:
         bus_id = foo["vehicleId"]
         line = foo["lineName"]
@@ -71,13 +75,22 @@ def download():
     #print(buses)
 
 
-def daemon(seg):
+def daemon(seg, pir):
     logging.debug("Now in daemon")
+    global buses
     last_download = 0
     next_download = 0
     CUT_OFF = 59 * 60   # ignore buses more than 59 minutes away
-    awake = True
-    while awake:
+
+    sleepy_time = 0
+    while True:
+        if time.time() > sleepy_time:
+            # go to sleep
+            seg.device.hide()
+            pir.wait_for_motion()
+            # blocks until the sensor is activated
+            seg.device.show()
+            sleepy_time = time.time() + WAKE_TIME
         logging.debug("bunny")
         if len(buses) == 0:
             seg.text = "ZERO BUS"
@@ -94,17 +107,19 @@ def daemon(seg):
                     continue
                 mins = str(expected // 60)
                 secs = str(expected % 60)
+                if len(secs) == 1:
+                    secs = "0" + secs
                 expected_times.append(mins + "." + secs)
             if len(expected_times) == 0:
                 seg.text = "ZERO BUS"
                 buses = []
             else:
-                pad0 = 4 - len(expected_times[0])
+                pad0 = 5 - len(expected_times[0])
                 first_time = " "*pad0 + expected_times[0]
                 if len(expected_times) == 1:
-                    expected_times.append("")  # throw in a blank
+                    expected_times.append(".")  # throw in a blank
                 for expected_time in expected_times[1:]:
-                    pad1 = 4 - len(expected_time)
+                    pad1 = 5 - len(expected_time)
                     other_time = " "*pad1 + expected_time
                     seg.text = first_time + other_time
                     time.sleep(5)
@@ -116,6 +131,7 @@ def daemon(seg):
             last_download = time.time()
             next_download = time.time() + DOWNLOAD_INTERVAL
 
+
 def main():
     try:
         logging.basicConfig(filename="log_tfl.txt", format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG)
@@ -124,7 +140,8 @@ def main():
         seg = sevensegment(device)
         #seg.text = "BUSES"
         #download()
-        daemon_thread = threading.Thread(target=daemon, args=(seg,))
+        pir = MotionSensor(PIR_GPIO)
+        daemon_thread = threading.Thread(target=daemon, args=(seg, pir,))
         #daemon_thread.setDaemon(True)
         logging.debug("Starting daemon")
         daemon_thread.start()
