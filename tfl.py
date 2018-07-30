@@ -36,7 +36,7 @@ DISPLAY_INTERVAL = 5 # show each bus for this many seconds
 
 WAKE_TIME = 100  # stay awake for 1m 40s
 
-MAX_CUT_OFF = 30 * 60   # ignore buses more than 30 minutes away
+MAX_CUT_OFF = 20 * 60   # ignore buses more than 20 minutes away
 MIN_CUT_OFF = 60  # ignore buses less than 1 minute away
 
 class Bus:
@@ -103,23 +103,38 @@ def daemon(seg, pir):
                 if expected < MIN_CUT_OFF or expected > MAX_CUT_OFF:
                     continue
                 mins = str(expected // 60)
-                secs = str(expected % 60)
-                if len(secs) == 1:
-                    secs = "0" + secs
-                expected_times.append(mins + "." + secs)
+                # first bus we *may* want minutes and seconds
+                # (now only if < 10mins)
+                if len(expected_times) == 0:
+                    if len(mins) == 1:
+                        secs = str(expected % 60)
+                        if len(secs) == 1:
+                            secs = "0" + secs
+                        expected_times.append(mins + "." + secs + " ")
+                    else:
+                        expected_times.append(mins + "  ")
+                # other buses just use miuntes
+                else:
+                    expected_times.append(mins)
             if len(expected_times) == 0:
                 seg.text = "ZERO BUS"
                 buses = []
             else:
-                pad0 = 5 - len(expected_times[0])
-                first_time = " "*pad0 + expected_times[0]
+                # process first bus
+                first_time = expected_times[0]
+                # handle the second screen in case of only one bus
                 if len(expected_times) == 1:
-                    expected_times.append(".")  # throw in a blank
-                for expected_time in expected_times[1:]:
-                    pad1 = 5 - len(expected_time)
-                    other_time = " "*pad1 + expected_time
-                    seg.text = first_time + other_time
-                    time.sleep(5)
+                    seg.text = first_time + "    ."
+                    time.sleep(DISPLAY_INTERVAL * 3)
+                else:
+                    # process other buses
+                    count = 2
+                    for expected_time in expected_times[1:]:
+                        pad1 = 3 - len(expected_time)
+                        other_time = str(count) + " "*pad1 + expected_time
+                        seg.text = first_time + other_time
+                        time.sleep(DISPLAY_INTERVAL)
+                        count += 1
         logging.debug(time.time())
         if time.time() > next_download:
             logging.debug("Bong!")
