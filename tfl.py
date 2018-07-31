@@ -31,12 +31,13 @@ DOWNLOAD_INTERVAL = 45  # download every 45 seconds
 # Note: was 30 seconds, but TfL docs say data is cached for 30
 # so "there is no benefit to the developer in querying any 
 # of the data services any more frequently"
+last_download = 0
 
 DISPLAY_INTERVAL = 5 # show each bus for this many seconds
 
-WAKE_TIME = 100  # stay awake for 1m 40s
+WAKE_TIME = 1000  # stay awake for 1m 40s
 
-MAX_CUT_OFF = 30 * 60   # ignore buses more than 30 minutes away
+MAX_CUT_OFF = 20 * 60   # ignore buses more than 20 minutes away
 MIN_CUT_OFF = 60  # ignore buses less than 1 minute away
 
 class Bus:
@@ -47,39 +48,98 @@ class Bus:
 
 buses = []
 
-def download():
+def download(prev_timestamp):
     logging.debug("Starting a download")
-    global buses
+    global buses, last_download
     # get the bus stop arrivals data from the TFL API
     response = requests.get(API_URI)
     if response.status_code != 200:
         # TODO how to handle errors??
         return
+    #last_download = time.time()
     logging.debug(response.status_code)
     json_data = response.json()  # TFL API returns a list
-
+    logging.debug(json_data)
     # clear out the previous list of buses
     if len(json_data) == 0:
         return
-    buses.clear()
+    #buses.clear()
     # process the json data to pull out just the interesting items
-    for foo in json_data:
-        bus_id = foo["vehicleId"]
-        line = foo["lineName"]
-        #buses[arrives] = Bus(bus_id, line, arrives)
-        #expected = foo["expectedArrival"]
-        expected = foo["timeToStation"]
-        print(line, expected)
-        buses.append(Bus(bus_id, line, expected))
+    timestamp = json_data[0]["timestamp"]
+    if timestamp != prev_timestamp:
+        last_download = time.time()
+        buses.clear()
+        for foo in json_data:
+            bus_id = foo["vehicleId"]
+            line = foo["lineName"]
+            #buses[arrives] = Bus(bus_id, line, arrives)
+            #expected = foo["expectedArrival"]
+            expected = foo["timeToStation"]
+            print(line, expected)
+            buses.append(Bus(bus_id, line, expected))
+        print()
+    else:
+        print("Found same timestamp, skipping")
+    timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download, (timestamp,))
+    timer_thread.start()
 
+def display_buses(seg):
+    global buses, last_download
+    # calculate how long ago the last download was
+    diff = time.time() - last_download
+    sorted_buses = sorted(buses, key=lambda bus: bus.expected)
+    expected_times = []
+    # iterate through bus data and store strings for display
+    for bus in sorted_buses:
+        expected = round(bus.expected - diff)
+        if expected < MIN_CUT_OFF or expected > MAX_CUT_OFF:
+            continue
+        mins = expected // 60
+        # first bus we *may* want minutes and seconds
+        # so check if this is the first bus
+        if len(expected_times) == 0:
+            # now only if < 10 minutes
+            if mins < 10:
+                secs = str(expected % 60)
+                if len(secs) == 1:
+                    secs = "0" + secs
+                expected_times.append(str(mins) + "." + secs + " ")
+            else:
+                expected_times.append(str(mins) + " ")
+        # other buses just use miuntes
+        else:
+            expected_times.append(mins)
+
+    # now iterate though the data to be displayed
+    if len(expected_times) == 0:
+        seg.text = "ZERO BUS"
+        buses = []
+    else:
+        # different display behaviour based on the times of the
+        # upcoming buses i.e how many can we fit on
+        if len(expected_times) == 1:
+            seg.text = expected_times[0]
+        else:
+            t1 = expected_times[0]
+            t2 = str(expected_times[1])
+            pad = " "*(5 - len(t2))
+            # if the second bus is only a single digit time then
+            # squeeze the third bus on to the display
+            if len(expected_times) >= 3 and len(t2) == 1:
+                t3 = str(expected_times[2])
+                pad = " "*(3 - len(t3))
+                seg.text = t1 + pad + t2 + " " + t3
+            else:
+                seg.text = t1 + pad + t2
+        time.sleep(1)
 
 def daemon(seg, pir):
     logging.debug("Now in daemon")
     global buses
-    last_download = 0
-    next_download = 0
+    #last_download = 0
+    #next_download = 0
 
-    sleepy_time = 0
+    sleepy_time = time.time() + WAKE_TIME
     while True:
         if time.time() > sleepy_time:
             # go to sleep
@@ -91,42 +151,10 @@ def daemon(seg, pir):
         logging.debug("bunny")
         if len(buses) == 0:
             seg.text = "ZERO BUS"
-            time.sleep(5)
+            time.sleep(DISPLAY_INTERVAL)
             pass
         else:
-            # calculate how long ago the last download was
-            diff = time.time() - last_download
-            sorted_buses = sorted(buses, key=lambda bus: bus.expected)
-            expected_times = []
-            for bus in sorted_buses:
-                expected = round(bus.expected - diff)
-                if expected < MIN_CUT_OFF or expected > MAX_CUT_OFF:
-                    continue
-                mins = str(expected // 60)
-                secs = str(expected % 60)
-                if len(secs) == 1:
-                    secs = "0" + secs
-                expected_times.append(mins + "." + secs)
-            if len(expected_times) == 0:
-                seg.text = "ZERO BUS"
-                buses = []
-            else:
-                pad0 = 5 - len(expected_times[0])
-                first_time = " "*pad0 + expected_times[0]
-                if len(expected_times) == 1:
-                    expected_times.append(".")  # throw in a blank
-                for expected_time in expected_times[1:]:
-                    pad1 = 5 - len(expected_time)
-                    other_time = " "*pad1 + expected_time
-                    seg.text = first_time + other_time
-                    time.sleep(5)
-        logging.debug(time.time())
-        if time.time() > next_download:
-            logging.debug("Bong!")
-            download_thread = threading.Thread(target=download)
-            download_thread.start()
-            last_download = time.time()
-            next_download = time.time() + DOWNLOAD_INTERVAL
+            display_buses(seg)
 
 
 def main():
@@ -140,8 +168,9 @@ def main():
         #daemon_thread.setDaemon(True)
         logging.debug("Starting daemon")
         daemon_thread.start()
+        download(0)
     except Exception as ex:
-        logger.exception(ex)
+        logging.exception(ex)
         raise
 
 if __name__ == '__main__':
