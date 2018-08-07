@@ -5,7 +5,7 @@ import time
 import logging
 from os import path
 
-from gpiozero import MotionSensor
+from gpiozero import MotionSensor, Button
 
 from luma.led_matrix.device import max7219
 from luma.core.interface.serial import spi, noop
@@ -22,6 +22,8 @@ with open(filepath) as conf:
     print(APP_KEY)
 
 PIR_GPIO = 14
+LEFT_BUTTON_GPIO = 17
+RIGHT_BUTTON_GPIO = 26
 
 BUS_STOP_ID = "490006045W"  # Stratford Park
 POINT = "/arrivals"
@@ -35,7 +37,7 @@ last_download = 0
 
 DISPLAY_INTERVAL = 5 # show each bus for this many seconds
 
-WAKE_TIME = 1000  # stay awake for 1m 40s
+WAKE_TIME = 100  # stay awake for 1m 40s
 
 MAX_CUT_OFF = 20 * 60   # ignore buses more than 20 minutes away
 MIN_CUT_OFF = 60  # ignore buses less than 1 minute away
@@ -83,6 +85,32 @@ def download(prev_timestamp):
     timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download, (timestamp,))
     timer_thread.start()
 
+
+def button_listener_work():
+    #left = Button(LEFT_BUTTON_GPIO)
+    right = Button(RIGHT_BUTTON_GPIO)
+    print("button listener thread")
+    #right.when_pressed = right_func
+    while True:
+        #if right.is_pressed:
+        right.wait_for_press()
+        print("Right on!")
+        print("Thread count = ", threading.enumerate())
+        time.sleep(3)
+
+def button_listener():
+    try:
+        button_listener_work()
+    except e:
+        logging.exception(e)
+
+# a little helper function to handle calcuating the length of a time str
+# with a dot in it which does not count to the length as far as our
+# sevenseg display is concerned
+def tlen(time_str):
+    return len(time_str) - time_str.count(".")
+
+
 def display_buses(seg):
     global buses, last_download
     # calculate how long ago the last download was
@@ -103,9 +131,11 @@ def display_buses(seg):
                 secs = str(expected % 60)
                 if len(secs) == 1:
                     secs = "0" + secs
-                expected_times.append(str(mins) + "." + secs + " ")
+                #expected_times.append(str(mins) + "." + secs + " ")
+                expected_times.append(str(mins) + "." + secs)
             else:
-                expected_times.append(str(mins) + " ")
+                #expected_times.append(str(mins) + " ")
+                expected_times.append(str(mins))
         # other buses just use miuntes
         else:
             expected_times.append(mins)
@@ -122,18 +152,19 @@ def display_buses(seg):
         else:
             t1 = expected_times[0]
             t2 = str(expected_times[1])
-            pad = " "*(5 - len(t2))
+            pad = " "*(8 - tlen(t1+t2))
             # if the second bus is only a single digit time then
             # squeeze the third bus on to the display
             if len(expected_times) >= 3 and len(t2) == 1:
                 t3 = str(expected_times[2])
-                pad = " "*(3 - len(t3))
+                pad = " "*(3 - tlen(t3))
                 seg.text = t1 + pad + t2 + " " + t3
             else:
                 seg.text = t1 + pad + t2
         time.sleep(1)
 
-def daemon(seg, pir):
+
+def daemon_work(seg, pir):
     logging.debug("Now in daemon")
     global buses
     #last_download = 0
@@ -152,9 +183,15 @@ def daemon(seg, pir):
         if len(buses) == 0:
             seg.text = "ZERO BUS"
             time.sleep(DISPLAY_INTERVAL)
-            pass
         else:
             display_buses(seg)
+
+
+def daemon(seg, pir):
+    try:
+        daemon_work(seg, pir)
+    except e:
+        logging.exception(e)
 
 
 def main():
@@ -169,6 +206,8 @@ def main():
         logging.debug("Starting daemon")
         daemon_thread.start()
         download(0)
+        button_thread = threading.Thread(target=button_listener)
+        button_thread.start()
     except Exception as ex:
         logging.exception(ex)
         raise
