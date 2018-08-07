@@ -3,6 +3,7 @@ import json
 import requests
 import time
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from os import path
 
 from gpiozero import MotionSensor, Button
@@ -196,7 +197,9 @@ def daemon(seg, pir):
 
 def main():
     try:
-        logging.basicConfig(filename="log_tfl.txt", format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG)
+        trfh = TimedRotatingFileHandler("log_tfl.txt", when="midnight")
+        #logging.basicConfig(filename="log_tfl.txt", format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG)
+        logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG, handlers=[trfh])
         serial = spi(port=0, device=0, gpio=noop())
         device = max7219(serial, cascaded=1)
         seg = sevensegment(device)
