@@ -12,16 +12,6 @@ from luma.led_matrix.device import max7219
 from luma.core.interface.serial import spi, noop
 from luma.core.virtual import sevensegment
 
-# TODO the ID and key are not actually used. can you ditch this code!?
-basepath = path.dirname(__file__)
-filepath = path.abspath(path.join(basepath, "..", "tfl.conf"))
-with open(filepath) as conf:
-    # auth tokens for my dev account with TFL
-    # NB TFL username is cp---3 registered with teach first email addr
-    APP_ID = "8717f35a"
-    APP_KEY = conf.readline()
-    print(APP_KEY)
-
 PIR_GPIO = 14
 LEFT_BUTTON_GPIO = 17
 RIGHT_BUTTON_GPIO = 26
@@ -51,22 +41,18 @@ class Bus:
 
 buses = []
 
-def download(prev_timestamp):
+def download_work(prev_timestamp):
     logging.debug("Starting a download")
     global buses, last_download
     # get the bus stop arrivals data from the TFL API
-    response = requests.get(API_URI)
-    if response.status_code != 200:
-        # TODO how to handle errors??
-        return
-    #last_download = time.time()
-    logging.debug(response.status_code)
+    response = requests.get(API_URI, timeout=5)
+    # this will raise an exception if the response is not 200
+    response.raise_for_status()
     json_data = response.json()  # TFL API returns a list
     logging.debug(json_data)
     # clear out the previous list of buses
     if len(json_data) == 0:
-        return
-    #buses.clear()
+        return prev_timestamp
     # process the json data to pull out just the interesting items
     timestamp = json_data[0]["timestamp"]
     if timestamp != prev_timestamp:
@@ -75,17 +61,26 @@ def download(prev_timestamp):
         for foo in json_data:
             bus_id = foo["vehicleId"]
             line = foo["lineName"]
-            #buses[arrives] = Bus(bus_id, line, arrives)
-            #expected = foo["expectedArrival"]
             expected = foo["timeToStation"]
             print(line, expected)
             buses.append(Bus(bus_id, line, expected))
         print()
     else:
         print("Found same timestamp, skipping")
-    timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download, (timestamp,))
-    timer_thread.start()
+    #timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download_work, (timestamp,))
+    #timer_thread.start()
+    return timestamp
 
+def download(prev_timestamp):
+    try:
+        timestamp = download_work(prev_timestamp)
+        timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download, (timestamp,))
+        timer_thread.start()
+    except Exception as e:
+        logging.exception(e)
+        # wait only 10 secs if there was an issue
+        quicker_thread = threading.Timer(10, download, (prev_timestamp,))
+        quicker_thread.start()
 
 def button_listener_work():
     #left = Button(LEFT_BUTTON_GPIO)
@@ -180,7 +175,6 @@ def daemon_work(seg, pir):
             # blocks until the sensor is activated
             seg.device.show()
             sleepy_time = time.time() + WAKE_TIME
-        logging.debug("bunny")
         if len(buses) == 0:
             seg.text = "ZERO BUS"
             time.sleep(DISPLAY_INTERVAL)
@@ -211,8 +205,8 @@ def main():
         download(0)
         button_thread = threading.Thread(target=button_listener)
         button_thread.start()
-    except Exception as ex:
-        logging.exception(ex)
+    except Exception as e:
+        logging.exception(e)
         raise
 
 if __name__ == '__main__':
