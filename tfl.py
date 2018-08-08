@@ -67,8 +67,6 @@ def download_work(prev_timestamp):
         print()
     else:
         print("Found same timestamp, skipping")
-    #timer_thread = threading.Timer(DOWNLOAD_INTERVAL, download_work, (timestamp,))
-    #timer_thread.start()
     return timestamp
 
 def download(prev_timestamp):
@@ -191,7 +189,9 @@ def daemon(seg, pir):
 
 def main():
     try:
-        trfh = TimedRotatingFileHandler("log_tfl.txt", when="midnight")
+        location = path.realpath(__file__)[:-len(__file__)]
+        logfile = location + "log_tfl.txt"
+        trfh = TimedRotatingFileHandler(logfile, when="midnight", backupCount=1)
         #logging.basicConfig(filename="log_tfl.txt", format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG)
         logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG, handlers=[trfh])
         serial = spi(port=0, device=0, gpio=noop())
