@@ -189,11 +189,13 @@ def daemon(seg, pir):
 
 def main():
     try:
-        location = path.realpath(__file__)[:-len(__file__)]
-        logfile = location + "log_tfl.txt"
+        location = path.realpath(__file__).rpartition("/")[0]
+        logfile = location + "/log_tfl.txt"
         trfh = TimedRotatingFileHandler(logfile, when="midnight", backupCount=1)
         #logging.basicConfig(filename="log_tfl.txt", format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG)
         logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.DEBUG, handlers=[trfh])
+        logging.debug("Location = " + location)
+        logging.debug("File = " + __file__)
         serial = spi(port=0, device=0, gpio=noop())
         device = max7219(serial, cascaded=1)
         seg = sevensegment(device)
